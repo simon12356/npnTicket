@@ -30,7 +30,7 @@ env/
 # =========================
 *.pkl
 *.pickle
-*.joblib
+!models/*.joblib
 *.keras
 *.h5
 *.pt
