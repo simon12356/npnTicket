@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.extra_route import router as routing_router
 from app.supabase_route import router as db_router
-from app.stats_route import router as stats_router   # ✅ new
+from app.stats_route import router as stats_router
 
 app = FastAPI(
     title="Ticket Auto-Router API",
@@ -19,9 +18,8 @@ app.add_middleware(
 )
 
 # Register routers
-app.include_router(routing_router)   # /route, /route/both
 app.include_router(db_router)        # /tickets, ...
-app.include_router(stats_router)     # ✅ new — /stats/*
+app.include_router(stats_router)     # /stats/*
 
 
 @app.get("/", tags=["Health"])
