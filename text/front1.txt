@@ -1,0 +1,64 @@
+Frontend Integration Guide for https://npnticket.onrender.com
+What's currently live on that URL
+Your root endpoint (GET /) returns:
+
+json
+{"message":"Ticket Auto-Router API is running 🚀"}
+So the API is up and running. The routing endpoint is POST /route.
+
+Important: the API expects plain text, not JSON
+This is the single biggest thing your frontend developer needs to know:
+
+http
+POST https://npnticket.onrender.com/route
+Content-Type: text/plain
+
+I tried resetting my password multiple times but it keeps failing.
+NOT this:
+
+json
+{ "text": "I tried resetting my password..." }
+If they send JSON, the API will return 422 Unprocessable Entity.
+
+What the frontend will see
+When the API decides the ticket needs a human (low confidence), the frontend receives:
+
+json
+{
+  "category": "Billing and Payments",
+  "category_confidence": 0.1412,
+  "urgency": "high",
+  "urgency_confidence": 0.42,
+  "routing_status": "MANUAL_REVIEW",
+  "assigned_queue": null,
+  "priority": null,
+  "requires_human": true,
+  "reason": "Low confidence (cat=0.14, urg=0.42, threshold=0.7)."
+}
+When confidence is high enough, the frontend gets:
+
+json
+{
+  "category": "Billing and Payments",
+  "category_confidence": 0.91,
+  "urgency": "medium",
+  "urgency_confidence": 0.88,
+  "routing_status": "AUTO_ROUTED",
+  "assigned_queue": "Billing and Payments",
+  "priority": "medium",
+  "requires_human": false,
+  "reason": "Auto-routed to 'Billing and Payments' with priority 'medium'."
+}
+Two possible routing_status values: "AUTO_ROUTED" or "MANUAL_REVIEW".
+
+Field-by-field meaning for UI
+Field	Type	What frontend should do
+category	string	Show as a badge/label.
+category_confidence	float 0–1	Show as % (e.g., 14.12%). Color-code red if < 0.7.
+urgency	string	Show as a colored badge (high=red, medium=amber, low=green).
+urgency_confidence	float 0–1	Show as %, same color rule.
+routing_status	AUTO_ROUTED | MANUAL_REVIEW	Big status banner. Green for auto, yellow for manual.
+assigned_queue	string | null	If null → show "—" or "Unassigned".
+priority	string | null	If null → show "—".
+requires_human	bool	If true → show "Human review needed" alert.
+reason	string	Show as tooltip or description below status.

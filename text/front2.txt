@@ -1,0 +1,423 @@
+# 🚀 Frontend Integration Guide
+
+**NPN Ticket Routing & Analytics API**  
+**Base URL:** `https://npnticket.onrender.com`  
+**CORS:** Enabled (`*` all origins allowed)  
+**Auth:** None required  
+**Default Content-Type:** `application/json`
+
+---
+
+## 📋 1. Quick Reference & Endpoint Cheat Sheet
+
+| Method | Endpoint | Description | Typical Use Case |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/tickets` | Create ticket, run 3 ML models, store predictions | Submit ticket form |
+| `GET` | `/tickets` | List all tickets with prediction history (descending) | Ticket table / Inbox |
+| `GET` | `/tickets/{ticket_id}` | Get single ticket details and predictions | Ticket detail modal / view |
+| `GET` | `/stats/summary` | Overall ticket & prediction counts + averages | Top-level dashboard KPI cards |
+| `GET` | `/stats/departments` | Department grouping → model performance → tickets | Department analytics view |
+| `GET` | `/stats/urgency` | Urgency grouping → model performance → tickets | Urgency priority breakdown |
+| `GET` | `/stats/models` | Performance breakdown by ML model name | ML Model evaluation dashboard |
+| `GET` | `/stats/confidence` | Confidence bucket distribution (`<0.3` to `≥0.9`) | Confidence histogram / charts |
+
+---
+
+## 🎨 2. UI & Business Logic Rules for Frontend
+
+### 🟢 Routing Status & Assignment
+The backend automatically evaluates ticket confidence against a **`0.70` threshold**:
+- **`AUTO_ROUTED`**: Both primary category and urgency confidence are **$\ge 0.70$**.
+  - `assigned_team`: Department name (e.g., `"Billing"`).
+  - `priority`: Urgency level (e.g., `"High"`).
+  - *UI Recommendation:* Display a **Green Badge** (`success`).
+- **`MANUAL_REVIEW`**: Either category or urgency confidence is **$< 0.70$**.
+  - `assigned_team`: `null` (display `"—"` or `"Unassigned"`).
+  - `priority`: `null` (display `"—"` or `"Pending Review"`).
+  - *UI Recommendation:* Display an **Amber/Yellow Badge** (`warning`) with an alert indicating human triage required.
+
+### 📊 Urgency Color Palette
+| Urgency | UI Badge Variant | Color Token Suggestion |
+| :--- | :--- | :--- |
+| `Critical` / `High` | Destructive / Red | `#EF4444` / `bg-red-500` |
+| `Medium` | Warning / Amber | `#F59E0B` / `bg-amber-500` |
+| `Low` | Muted / Green / Blue | `#10B981` / `bg-emerald-500` |
+
+### 📈 Confidence Formatting
+- API returns float values between `0.0` and `1.0` (e.g., `0.9312`).
+- *Display Rule:* Format as percentage: `(confidence * 100).toFixed(1) + "%"` $\rightarrow$ **`93.1%`**.
+- Color threshold:
+  - $\ge 70\%$: High (Green)
+  - $50\% - 69.9\%$: Moderate (Yellow)
+  - $< 50\%$: Low (Red)
+
+### ⏱️ Timestamps & Identifiers
+- **Ticket ID**: 6-digit integer (`100000` to `999999`).
+- **Timestamps**: `created_at` is returned as string format: `"YYYY-MM-DD HH:MM:SS.ffffff"`. Use `new Date(item.created_at.replace(" ", "T"))` or `date-fns` / `dayjs` for UI parsing.
+
+---
+
+
+## 📡 4. Detailed Endpoints & Examples
+
+### 1️⃣ `POST /tickets` — Create Ticket & Run Predictions
+
+* **Description:** Submits customer inquiry text, runs all 3 ML models, assigns routing, and persists results to the database.
+* **Headers:** `Content-Type: application/json`
+
+#### Request Body
+```json
+{
+  "ticket_text": "I was charged twice for my order #8921"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "ticket_id": 483721,
+  "ticket_text": "I was charged twice for my order #8921",
+  "created_at": "2026-09-20 14:22:31.123456",
+  "routing_status": "AUTO_ROUTED",
+  "assigned_team": "Billing",
+  "priority": "High",
+  "category": "Billing",
+  "category_confidence": 0.93,
+  "urgency": "High",
+  "urgency_confidence": 0.81,
+  "department_predictions": [
+    {
+      "prediction_id": 1,
+      "ticket_id": 483721,
+      "model_name": "TFIDF_LogisticRegression",
+      "model_version": "1.0",
+      "predicted_department": "Billing",
+      "confidence": 0.93,
+      "created_at": "2026-09-20 14:22:31.123456"
+    },
+    {
+      "prediction_id": 2,
+      "ticket_id": 483721,
+      "model_name": "TFIDF_RandomForest",
+      "model_version": "1.0",
+      "predicted_department": "Billing",
+      "confidence": 0.88,
+      "created_at": "2026-09-20 14:22:31.123456"
+    }
+  ],
+  "urgency_predictions": [
+    {
+      "prediction_id": 1,
+      "ticket_id": 483721,
+      "model_name": "TFIDF_RandomForest",
+      "model_version": "1.0",
+      "predicted_urgency": "High",
+      "confidence": 0.81,
+      "created_at": "2026-09-20 14:22:31.123456"
+    }
+  ],
+  "all_models": {
+    "category_final": { "label": "Billing", "confidence": 0.93 },
+    "category_rf":    { "label": "Billing", "confidence": 0.88 },
+    "urgency_rf":     { "label": "High",    "confidence": 0.81 }
+  }
+}
+```
+
+#### Error Responses
+| Status Code | Reason | Typical UI Message |
+| :--- | :--- | :--- |
+| `400 Bad Request` | Ticket text is empty or only whitespace | "Please enter ticket details before submitting." |
+| `422 Unprocessable Entity` | Missing or invalid payload | "Invalid form payload format." |
+| `500 Internal Server Error` | Database insert or connection error | "Server error while saving ticket. Please try again." |
+
+---
+
+### 2️⃣ `GET /tickets` — List All Tickets
+
+* **Description:** Retrieves all tickets in reverse chronological order (`created_at DESC`) with nested prediction history. Returns `[]` if empty.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "ticket_id": 483721,
+    "ticket_text": "I was charged twice for my order #8921",
+    "created_at": "2026-09-20 14:22:31.123456",
+    "department_predictions": [
+      {
+        "prediction_id": 1,
+        "ticket_id": 483721,
+        "model_name": "TFIDF_LogisticRegression",
+        "model_version": "1.0",
+        "predicted_department": "Billing",
+        "confidence": 0.93,
+        "created_at": "2026-09-20 14:22:31.123456"
+      }
+    ],
+    "urgency_predictions": [
+      {
+        "prediction_id": 1,
+        "ticket_id": 483721,
+        "model_name": "TFIDF_RandomForest",
+        "model_version": "1.0",
+        "predicted_urgency": "High",
+        "confidence": 0.81,
+        "created_at": "2026-09-20 14:22:31.123456"
+      }
+    ]
+  }
+]
+```
+
+---
+
+### 3️⃣ `GET /tickets/{ticket_id}` — Get Single Ticket
+
+* **Description:** Look up full prediction details for a specific 6-digit ticket ID.
+* **Path Parameter:** `ticket_id` (`integer`, required, between `100000` and `999999`). Example: `/tickets/483721`.
+
+#### Response `200 OK`
+```json
+{
+  "ticket_id": 483721,
+  "ticket_text": "I was charged twice for my order #8921",
+  "created_at": "2026-09-20 14:22:31.123456",
+  "department_predictions": [
+    {
+      "prediction_id": 1,
+      "ticket_id": 483721,
+      "model_name": "TFIDF_LogisticRegression",
+      "model_version": "1.0",
+      "predicted_department": "Billing",
+      "confidence": 0.93,
+      "created_at": "2026-09-20 14:22:31.123456"
+    }
+  ],
+  "urgency_predictions": [
+    {
+      "prediction_id": 1,
+      "ticket_id": 483721,
+      "model_name": "TFIDF_RandomForest",
+      "model_version": "1.0",
+      "predicted_urgency": "High",
+      "confidence": 0.81,
+      "created_at": "2026-09-20 14:22:31.123456"
+    }
+  ]
+}
+```
+
+#### Error Responses
+| Status Code | Reason | Typical UI Message |
+| :--- | :--- | :--- |
+| `404 Not Found` | Ticket ID does not exist | "Ticket #123456 not found." |
+| `422 Unprocessable Entity` | ID not a 6-digit integer | "Invalid ticket ID format (must be 6 digits)." |
+
+---
+
+### 4️⃣ `GET /stats/summary` — Analytics Overview Cards
+
+* **Description:** Overall statistics for dashboard metric/counter cards.
+
+#### Response `200 OK`
+```json
+{
+  "total_tickets": 128,
+  "total_department_predictions": 256,
+  "total_urgency_predictions": 128,
+  "avg_department_predictions_per_ticket": 2.0,
+  "avg_urgency_predictions_per_ticket": 1.0
+}
+```
+*Note: If `total_tickets` is 0, averages safely return `0.0`.*
+
+---
+
+### 5️⃣ `GET /stats/departments` — Department Performance
+
+* **Description:** Grouped by department $\rightarrow$ model breakdown with individual ticket references. Sorted by `avg_confidence` descending.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "department": "Billing",
+    "models": [
+      {
+        "model_name": "TFIDF_LogisticRegression",
+        "confidence": 0.9312,
+        "tickets": [
+          { "ticket_id": 483721, "confidence": 0.9312 }
+        ]
+      },
+      {
+        "model_name": "TFIDF_RandomForest",
+        "confidence": 0.8804,
+        "tickets": [
+          { "ticket_id": 483721, "confidence": 0.8804 }
+        ]
+      }
+    ],
+    "avg_confidence": 0.9058
+  }
+]
+```
+
+---
+
+### 6️⃣ `GET /stats/urgency` — Urgency Performance
+
+* **Description:** Grouped by urgency level $\rightarrow$ model breakdown with ticket references. Sorted by `avg_confidence` descending.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "urgency": "High",
+    "models": [
+      {
+        "model_name": "TFIDF_RandomForest",
+        "confidence": 0.8103,
+        "tickets": [
+          { "ticket_id": 483721, "confidence": 0.8103 }
+        ]
+      }
+    ],
+    "avg_confidence": 0.8103
+  }
+]
+```
+
+---
+
+### 7️⃣ `GET /stats/models` — Model Comparison View
+
+* **Description:** Lists all department models and urgency models separately with assigned tickets and average confidence.
+
+#### Response `200 OK`
+```json
+{
+  "department_models": [
+    {
+      "model_name": "TFIDF_LogisticRegression",
+      "confidence": 0.9312,
+      "tickets": [
+        { "ticket_id": 483721, "department": "Billing", "confidence": 0.9312 }
+      ]
+    },
+    {
+      "model_name": "TFIDF_RandomForest",
+      "confidence": 0.8804,
+      "tickets": [
+        { "ticket_id": 483721, "department": "Billing", "confidence": 0.8804 }
+      ]
+    }
+  ],
+  "urgency_models": [
+    {
+      "model_name": "TFIDF_RandomForest",
+      "confidence": 0.8103,
+      "tickets": [
+        { "ticket_id": 483721, "urgency": "High", "confidence": 0.8103 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### 8️⃣ `GET /stats/confidence` — Confidence Distribution & Buckets
+
+* **Description:** Categorizes predictions into 5 standard confidence buckets for department and urgency models. Ideal for rendering distribution bar charts or histograms.
+
+#### Bucket Ranges
+| Bucket Key | Math Interval | Meaning |
+| :--- | :--- | :--- |
+| `below_0_3` | $c < 0.30$ | Very Low Confidence |
+| `from_0_3_to_0_5` | $0.30 \le c < 0.50$ | Low Confidence |
+| `from_0_5_to_0_7` | $0.50 \le c < 0.70$ | Moderate Confidence (triggers Manual Review) |
+| `from_0_7_to_0_9` | $0.70 \le c < 0.90$ | High Confidence (Auto Routed) |
+| `above_0_9` | $c \ge 0.90$ | Very High Confidence (Auto Routed) |
+
+#### Response `200 OK`
+```json
+{
+  "department_confidence_buckets": [
+    { "bucket": "below_0_3", "count": 0, "tickets": [] },
+    { "bucket": "from_0_3_to_0_5", "count": 0, "tickets": [] },
+    { "bucket": "from_0_5_to_0_7", "count": 0, "tickets": [] },
+    {
+      "bucket": "from_0_7_to_0_9",
+      "count": 1,
+      "tickets": [
+        { "ticket_id": 483721, "model_name": "TFIDF_RandomForest", "confidence": 0.8804 }
+      ]
+    },
+    {
+      "bucket": "above_0_9",
+      "count": 1,
+      "tickets": [
+        { "ticket_id": 483721, "model_name": "TFIDF_LogisticRegression", "confidence": 0.9312 }
+      ]
+    }
+  ],
+  "urgency_confidence_buckets": [
+    { "bucket": "below_0_3", "count": 0, "tickets": [] },
+    { "bucket": "from_0_3_to_0_5", "count": 0, "tickets": [] },
+    { "bucket": "from_0_5_to_0_7", "count": 0, "tickets": [] },
+    { "bucket": "from_0_7_to_0_9", "count": 0, "tickets": [] },
+    {
+      "bucket": "above_0_9",
+      "count": 1,
+      "tickets": [
+        { "ticket_id": 483721, "model_name": "TFIDF_RandomForest", "confidence": 0.8103 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 🛠️ 5. Ready-to-Use Frontend Fetch Code
+
+```javascript
+const BASE_URL = "https://npnticket.onrender.com";
+
+// 1. Submit a new ticket
+export async function createTicket(ticketText) {
+  const res = await fetch(`${BASE_URL}/tickets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket_text: ticketText })
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Request failed with status ${res.status}`);
+  }
+  return await res.json();
+}
+
+// 2. Fetch all tickets
+export async function fetchTickets() {
+  const res = await fetch(`${BASE_URL}/tickets`);
+  if (!res.ok) throw new Error("Failed to fetch tickets");
+  return await res.json();
+}
+
+// 3. Get single ticket by ID
+export async function fetchTicketById(ticketId) {
+  const res = await fetch(`${BASE_URL}/tickets/${ticketId}`);
+  if (!res.ok) throw new Error(`Ticket #${ticketId} not found`);
+  return await res.json();
+}
+
+// 4. Fetch dashboard stats
+export async function fetchStatsSummary() {
+  const res = await fetch(`${BASE_URL}/stats/summary`);
+  if (!res.ok) throw new Error("Failed to load summary stats");
+  return await res.json();
+}
+```
