@@ -1,5 +1,3 @@
-# predictor.py
-
 import joblib
 from pathlib import Path
 from scipy.sparse import hstack
@@ -12,132 +10,110 @@ from scipy.sparse import hstack
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
 
-# Final combined category model
-MODEL_FILE = MODEL_DIR / "category_final_model.joblib"
-CHAR_VECTORIZER_FILE = MODEL_DIR / "category_final_char_vectorizer.joblib"
-WORD_VECTORIZER_FILE = MODEL_DIR / "category_final_word_vectorizer.joblib"
 
-# Category Random Forest baseline
-CATEGORY_RF_VECTORIZER_FILE = MODEL_DIR / "category_rf_vectorizer.joblib"
-CATEGORY_RF_MODEL_FILE = MODEL_DIR / "category_rf_model.joblib"
+# Department — Logistic Regression (char + word TF-IDF)
+DEPT_LOGREG_MODEL = MODEL_DIR / "category_final_model.joblib"
+DEPT_LOGREG_CHAR = MODEL_DIR / "category_final_char_vectorizer.joblib"
+DEPT_LOGREG_WORD = MODEL_DIR / "category_final_word_vectorizer.joblib"
 
-# Urgency Random Forest
-URGENCY_RF_VECTORIZER_FILE = MODEL_DIR / "urgency_rf_vectorizer.joblib"
-URGENCY_RF_MODEL_FILE = MODEL_DIR / "urgency_rf_model.joblib"
+# Department — Random Forest (word TF-IDF)
+DEPT_RF_MODEL = MODEL_DIR / "category_rf_model.joblib"
+DEPT_RF_VEC = MODEL_DIR / "category_rf_vectorizer.joblib"
 
+# Urgency — Logistic Regression (char + word TF-IDF)
+URG_LOGREG_MODEL = MODEL_DIR / "urgency_combined_model.joblib"
+URG_LOGREG_CHAR = MODEL_DIR / "urgency_combined_char_vectorizer.joblib"
+URG_LOGREG_WORD = MODEL_DIR / "urgency_combined_word_vectorizer.joblib"
 
-# ============================================================
-# LOAD MODELS + VECTORIZERS (once, at import time)
-# ============================================================
-
-# Final combined category model
-_model = joblib.load(MODEL_FILE)
-_char_vectorizer = joblib.load(CHAR_VECTORIZER_FILE)
-_word_vectorizer = joblib.load(WORD_VECTORIZER_FILE)
-
-# Category RF baseline
-_category_rf_vectorizer = joblib.load(CATEGORY_RF_VECTORIZER_FILE)
-_category_rf_model = joblib.load(CATEGORY_RF_MODEL_FILE)
-
-# Urgency RF
-_urgency_rf_vectorizer = joblib.load(URGENCY_RF_VECTORIZER_FILE)
-_urgency_rf_model = joblib.load(URGENCY_RF_MODEL_FILE)
+# Urgency — Random Forest (word TF-IDF)
+URG_RF_MODEL = MODEL_DIR / "urgency_rf_model.joblib"
+URG_RF_VEC = MODEL_DIR / "urgency_rf_vectorizer.joblib"
 
 
 # ============================================================
-# PREDICT: FINAL CATEGORY (char + word combined)
+# LOAD MODELS
 # ============================================================
 
-def predict_category(text: str) -> dict:
-    """
-    Predict the category of a ticket text using the combined
-    char + word TF-IDF model.
+dept_logreg_model = joblib.load(DEPT_LOGREG_MODEL)
+dept_logreg_char = joblib.load(DEPT_LOGREG_CHAR)
+dept_logreg_word = joblib.load(DEPT_LOGREG_WORD)
 
-    Args:
-        text (str): The raw ticket text.
+dept_rf_model = joblib.load(DEPT_RF_MODEL)
+dept_rf_vec = joblib.load(DEPT_RF_VEC)
 
-    Returns:
-        dict: {"category": str, "confidence": float}
-    """
-    # 1. Character TF-IDF (use .transform(), NEVER .fit_transform())
-    char_features = _char_vectorizer.transform([text])
+urg_logreg_model = joblib.load(URG_LOGREG_MODEL)
+urg_logreg_char = joblib.load(URG_LOGREG_CHAR)
+urg_logreg_word = joblib.load(URG_LOGREG_WORD)
 
-    # 2. Word TF-IDF
-    word_features = _word_vectorizer.transform([text])
+urg_rf_model = joblib.load(URG_RF_MODEL)
+urg_rf_vec = joblib.load(URG_RF_VEC)
 
-    # 3. Combine exactly as done during training
-    combined_features = hstack([char_features, word_features])
 
-    # 4. Predict
-    prediction = _model.predict(combined_features)[0]
+# ============================================================
+# 1. DEPARTMENT — LOGISTIC REGRESSION
+# ============================================================
 
-    # 5. Confidence
-    probabilities = _model.predict_proba(combined_features)[0]
-    confidence = float(probabilities.max())
+def predict_department_logreg(text: str):
+    char_features = dept_logreg_char.transform([text])
+    word_features = dept_logreg_word.transform([text])
+
+    X = hstack([char_features, word_features])
+
+    prediction = dept_logreg_model.predict(X)[0]
+    probability = dept_logreg_model.predict_proba(X)[0]
 
     return {
-        "category": str(prediction),
-        "confidence": round(confidence, 4),
+        "department": str(prediction),
+        "confidence": round(float(probability.max()), 4)
     }
 
 
 # ============================================================
-# PREDICT: CATEGORY RF BASELINE (word TF-IDF only)
+# 2. DEPARTMENT — RANDOM FOREST
 # ============================================================
 
-def predict_category_rf(text: str) -> dict:
-    """
-    Predict the category of a ticket text using the Random Forest
-    baseline model (word TF-IDF only).
+def predict_department_rf(text: str):
+    X = dept_rf_vec.transform([text])
 
-    Args:
-        text (str): The raw ticket text.
-
-    Returns:
-        dict: {"category": str, "confidence": float}
-    """
-    # 1. Word TF-IDF
-    features = _category_rf_vectorizer.transform([text])
-
-    # 2. Predict
-    prediction = _category_rf_model.predict(features)[0]
-
-    # 3. Confidence
-    probabilities = _category_rf_model.predict_proba(features)[0]
-    confidence = float(probabilities.max())
+    prediction = dept_rf_model.predict(X)[0]
+    probability = dept_rf_model.predict_proba(X)[0]
 
     return {
-        "category": str(prediction),
-        "confidence": round(confidence, 4),
+        "department": str(prediction),
+        "confidence": round(float(probability.max()), 4)
     }
 
 
 # ============================================================
-# PREDICT: URGENCY RF (word TF-IDF only)
+# 3. URGENCY — LOGISTIC REGRESSION
 # ============================================================
 
-def predict_urgency_rf(text: str) -> dict:
-    """
-    Predict the urgency of a ticket text using the Random Forest
-    urgency model (word TF-IDF only).
+def predict_urgency_logreg(text: str):
+    char_features = urg_logreg_char.transform([text])
+    word_features = urg_logreg_word.transform([text])
 
-    Args:
-        text (str): The raw ticket text.
+    X = hstack([char_features, word_features])
 
-    Returns:
-        dict: {"urgency": str, "confidence": float}
-    """
-    # 1. Word TF-IDF
-    features = _urgency_rf_vectorizer.transform([text])
-
-    # 2. Predict
-    prediction = _urgency_rf_model.predict(features)[0]
-
-    # 3. Confidence
-    probabilities = _urgency_rf_model.predict_proba(features)[0]
-    confidence = float(probabilities.max())
+    prediction = urg_logreg_model.predict(X)[0]
+    probability = urg_logreg_model.predict_proba(X)[0]
 
     return {
         "urgency": str(prediction),
-        "confidence": round(confidence, 4),
+        "confidence": round(float(probability.max()), 4)
+    }
+
+
+# ============================================================
+# 4. URGENCY — RANDOM FOREST
+# ============================================================
+
+def predict_urgency_rf(text: str):
+    X = urg_rf_vec.transform([text])
+
+    prediction = urg_rf_model.predict(X)[0]
+    probability = urg_rf_model.predict_proba(X)[0]
+
+    return {
+        "urgency": str(prediction),
+        "confidence": round(float(probability.max()), 4)
     }
